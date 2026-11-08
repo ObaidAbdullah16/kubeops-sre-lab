@@ -15,7 +15,7 @@ concurrency:
 jobs:
   app:
     name: Demo app (Go)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -38,7 +38,7 @@ jobs:
 
   gitops:
     name: Manifests, policies and SLO rules
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -87,7 +87,7 @@ jobs:
 
   infra-and-scripts:
     name: Terraform, scripts, workflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -100,7 +100,7 @@ jobs:
         with:
           terraform_version: "<1.18.0"
           terraform_wrapper: false
-      - run: pip install checkov shellcheck-py actionlint-py zizmor
+      - run: pip install -r .github/requirements-ci.txt
       - run: terraform fmt -check -recursive infra
       - run: |
           terraform -chdir=infra/eks init -backend=false -input=false >/dev/null
