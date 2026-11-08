@@ -1,0 +1,35 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-registries
+  annotations:
+    policies.kyverno.io/title: Allowed registries
+    policies.kyverno.io/description: >-
+      Only images from this project's GitHub Container Registry namespace and the official Kubernetes registry may run.
+spec:
+  validationActions: [Deny]
+  # Also check Deployments, StatefulSets, ... so a bad manifest is rejected
+  # at apply time instead of failing later when the ReplicaSet creates pods.
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    # Only namespaces that opt in (label kubeops.dev/policy=enforce). The
+    # platform namespaces (monitoring, argocd, kyverno) are left alone.
+    namespaceSelector:
+      matchLabels:
+        kubeops.dev/policy: enforce
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    # Init containers run first, with the same pod privileges: check them too.
+    - name: allContainers
+      expression: >-
+        object.spec.containers + (has(object.spec.initContainers) ? object.spec.initContainers : [])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c, c.image.startsWith('ghcr.io/obaidabdullah16/') || c.image.startsWith('registry.k8s.io/'))
+      message: images must come from ghcr.io/obaidabdullah16/ or registry.k8s.io/

@@ -1,0 +1,29 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-probes
+  annotations:
+    policies.kyverno.io/title: Require health probes
+    policies.kyverno.io/description: >-
+      Every container needs a readiness probe (no traffic before it is ready) and a liveness probe (restart when it hangs).
+spec:
+  validationActions: [Deny]
+  # Also check Deployments, StatefulSets, ... so a bad manifest is rejected
+  # at apply time instead of failing later when the ReplicaSet creates pods.
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    # Only namespaces that opt in (label kubeops.dev/policy=enforce). The
+    # platform namespaces (monitoring, argocd, kyverno) are left alone.
+    namespaceSelector:
+      matchLabels:
+        kubeops.dev/policy: enforce
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  validations:
+    - expression: object.spec.containers.all(c, has(c.readinessProbe) && has(c.livenessProbe))
+      message: every container needs a readinessProbe and a livenessProbe

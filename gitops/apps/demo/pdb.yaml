@@ -1,0 +1,10 @@
+# Voluntary disruptions (node drain, cluster upgrade) may take down at most one replica.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-app
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-app

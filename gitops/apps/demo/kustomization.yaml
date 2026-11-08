@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - servicemonitor.yaml
+  - pdb.yaml
+  - loadgen.yaml
+images:
+  # Updated automatically by .github/workflows/image.yml after every signed build.
+  - name: ghcr.io/obaidabdullah16/kubeops-demo-app
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

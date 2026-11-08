@@ -1,0 +1,42 @@
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-demo-image-signature
+  annotations:
+    policies.kyverno.io/title: Verify image signatures
+    policies.kyverno.io/description: >-
+      The demo image may only run if it was signed (keyless, Sigstore) by this
+      repository's image workflow on the main branch. A locally built or
+      tampered image is rejected at admission.
+spec:
+  validationActions: [Deny]
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubeops.dev/policy: enforce
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: ghcr.io/obaidabdullah16/kubeops-demo-app*
+  validationConfigurations:
+    verifyDigest: true # only digests: a tag could be moved to another image after signing
+  webhookConfiguration:
+    timeoutSeconds: 20
+  attestors:
+    - name: github
+      cosign:
+        keyless:
+          identities:
+            - subject: https://github.com/ObaidAbdullah16/kubeops-sre-lab/.github/workflows/image.yml@refs/heads/main
+              issuer: https://token.actions.githubusercontent.com
+        ctlog:
+          url: https://rekor.sigstore.dev
+  validations:
+    - expression: images.containers.map(image, verifyImageSignatures(image, [attestors.github])).all(e, e > 0)
+      message: the demo image must be signed by the kubeops-sre-lab image workflow on main

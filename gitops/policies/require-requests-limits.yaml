@@ -1,0 +1,33 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Require resource requests and limits
+    policies.kyverno.io/description: >-
+      Every container must request CPU and memory and set a memory limit, so the scheduler can place pods and one leaky pod cannot take down a node.
+spec:
+  validationActions: [Deny]
+  # Also check Deployments, StatefulSets, ... so a bad manifest is rejected
+  # at apply time instead of failing later when the ReplicaSet creates pods.
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    # Only namespaces that opt in (label kubeops.dev/policy=enforce). The
+    # platform namespaces (monitoring, argocd, kyverno) are left alone.
+    namespaceSelector:
+      matchLabels:
+        kubeops.dev/policy: enforce
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  validations:
+    - expression: >-
+        object.spec.containers.all(c,
+          has(c.resources) && has(c.resources.requests) &&
+          'cpu' in c.resources.requests && 'memory' in c.resources.requests &&
+          has(c.resources.limits) && 'memory' in c.resources.limits)
+      message: every container must set resources.requests.cpu, resources.requests.memory and resources.limits.memory

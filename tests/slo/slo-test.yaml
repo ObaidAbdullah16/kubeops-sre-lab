@@ -1,0 +1,164 @@
+# promtool unit tests for gitops/observability/slo-rules.yaml (run: bash tests/slo/run.sh)
+rule_files:
+  - rules.generated.yaml
+evaluation_interval: 30s
+
+tests:
+  # 10% of requests fail for 70 minutes -> fast AND slow availability burn alerts.
+  - name: error spike pages
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="200",pod="a"}'
+        values: '0+540x70'
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="500",pod="a"}'
+        values: '0+60x70'
+    promql_expr_test:
+      - expr: round(demo:sli_errors:ratio_rate1h, 0.001)
+        eval_time: 65m
+        exp_samples:
+          - value: 0.1
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: DemoErrorBudgetBurnFast
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: availability}
+            exp_annotations:
+              summary: Orders API is burning its error budget fast
+              description: >-
+                10% of /api requests failed over the alert window (1h or 6h; the current rate can be higher). At this rate the 30-day error budget (0.5%) is gone in about two days or less.
+              runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-01-error-spike.md
+      - eval_time: 65m
+        alertname: DemoErrorBudgetBurnSlow
+        exp_alerts:
+          - exp_labels: {severity: warning, slo: availability}
+            exp_annotations:
+              summary: Orders API error rate is above its SLO
+              description: The error budget is being used faster than it is earned. Investigate during working hours.
+              runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-01-error-spike.md
+
+  # 0.1% errors is within the 0.5% budget: no alert.
+  - name: healthy service stays quiet
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="200",pod="a"}'
+        values: '0+999x70'
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="500",pod="a"}'
+        values: '0+1x70'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: DemoErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 65m
+        alertname: DemoErrorBudgetBurnSlow
+        exp_alerts: []
+
+  # No 5xx series at all must give an error ratio of 0, not "no data".
+  - name: zero errors is zero
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="200",pod="a"}'
+        values: '0+100x20'
+    promql_expr_test:
+      - expr: demo:sli_errors:ratio_rate5m
+        eval_time: 15m
+        exp_samples:
+          - labels: 'demo:sli_errors:ratio_rate5m'
+            value: 0
+
+  # Health checks are not part of the SLO.
+  - name: health checks do not count
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="200",pod="a"}'
+        values: '0+100x20'
+      - series: 'http_requests_total{job="demo-app",route="/readyz",method="GET",code="503",pod="a"}'
+        values: '0+100x20'
+    promql_expr_test:
+      - expr: demo:sli_errors:ratio_rate5m
+        eval_time: 15m
+        exp_samples:
+          - labels: 'demo:sli_errors:ratio_rate5m'
+            value: 0
+
+  # 20% of requests slower than 300 ms -> latency page.
+  - name: latency regression pages
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{job="demo-app",route="/api/orders",method="GET",le="0.3",pod="a"}'
+        values: '0+800x70'
+      - series: 'http_request_duration_seconds_count{job="demo-app",route="/api/orders",method="GET",pod="a"}'
+        values: '0+1000x70'
+    promql_expr_test:
+      - expr: round(demo:sli_slow:ratio_rate1h, 0.001)
+        eval_time: 65m
+        exp_samples:
+          - value: 0.2
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: DemoLatencyBudgetBurnFast
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: latency}
+            exp_annotations:
+              summary: Orders API is too slow
+              description: >-
+                20% of /api requests took longer than 300 ms over the alert window (1h or 6h; SLO: at most 1%).
+              runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-02-latency.md
+
+  # Replicas disappearing.
+  - name: replicas down
+    interval: 1m
+    input_series:
+      - series: 'up{job="demo-app",pod="a"}'
+        values: '1x5 0x10'
+      - series: 'up{job="demo-app",pod="b"}'
+        values: '1x5 0x10'
+      - series: 'up{job="demo-app",pod="c"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: DemoReplicasDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: DemoReplicasDown
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: Fewer than 2 of 3 demo-app replicas are being scraped
+              description: Only 1 replicas are up. One more failure and there is no redundancy left.
+              runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-03-pod-node-failure.md
+
+  - name: total outage
+    interval: 1m
+    input_series:
+      - series: 'up{job="demo-app",pod="a"}'
+        values: '1x3 0x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: DemoAllReplicasDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: The orders API is completely down
+              description: No demo-app replica is reachable by Prometheus.
+              runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-03-pod-node-failure.md
+
+  # Detection time is part of the design: after 2 h of clean traffic, a 15% error rate
+  # pages only when the 1-hour ratio reaches 7.2% (14.4x burn), about 29-31 minutes later.
+  # The game-day runbook (GD-01) and chaos/error-spike.sh quote this timing.
+  - name: a 15% error spike pages after about 30 minutes
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="200",pod="a"}'
+        values: '0+600x120 72000+510x60'
+      - series: 'http_requests_total{job="demo-app",route="/api/orders",method="GET",code="500",pod="a"}'
+        values: '_x120 0+90x60'
+    # Asserted through the ALERTS series: the description quotes the live 1h ratio, whose
+    # exact value at the check time depends on rule-evaluation alignment.
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="DemoErrorBudgetBurnFast", alertstate="firing"})
+        eval_time: 145m
+        exp_samples: []
+      - expr: count(ALERTS{alertname="DemoErrorBudgetBurnFast", alertstate="firing"})
+        eval_time: 155m
+        exp_samples:
+          - value: 1

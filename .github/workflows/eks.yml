@@ -1,0 +1,56 @@
+# Optional EKS demo day from the Actions tab: up / status / down.
+# A cluster created here is administered by the CI role; add your own IAM
+# principal in the EKS_ADMIN_ARNS repository variable to use kubectl from your laptop.
+name: EKS (optional)
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [status, up, down]
+        default: status
+
+permissions: {}
+
+concurrency:
+  group: aws-kubeops-eks
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: aws
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check configuration
+        if: vars.AWS_ROLE_ARN == ''
+        run: |
+          echo "::error::AWS_ROLE_ARN is not set: start the AWS foundation on your laptop first (bash _setup/projects.sh up foundation)"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "<1.18.0"
+          terraform_wrapper: false
+      - name: Is this repository connected to AWS?
+        if: vars.AWS_ROLE_ARN == ''
+        run: |
+          echo "::error::Not connected to AWS (no AWS_ROLE_ARN variable). AWS accounts from the new AWS sign-up cannot let GitHub log in - run it from your laptop instead: bash _setup/projects.sh up kubeops-eks (or down)"
+          exit 1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+          role-session-name: kubeops-eks
+      - name: Run ${{ inputs.action }}
+        env:
+          ACTION: ${{ inputs.action }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+          EKS_ADMIN_ARNS: ${{ vars.EKS_ADMIN_ARNS }}
+          EKS_OPEN_API: "1"   # the runner's IP changes every run
+        run: bash "scripts/eks-${ACTION}.sh"

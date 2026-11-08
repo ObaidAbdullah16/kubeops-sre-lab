@@ -1,0 +1,187 @@
+# SLOs for the demo "orders" API (only /api/* routes count; health checks do not).
+#
+#   Availability SLO: 99.5% of requests succeed (non-5xx)   -> error budget 0.5%
+#   Latency SLO:      99% of requests finish within 300 ms   -> slow budget 1%
+#   Window: 30 days (the lab keeps 7 days of data, see dashboards for the 7-day view)
+#
+# Alerts use multi-window, multi-burn-rate rules from the Google SRE Workbook
+# ("Alerting on SLOs"): page when the budget burns 14.4x too fast over 1h (and the
+# last 5m confirm it is still happening), or 6x over 6h; open a ticket for 3x/1d and 1x/3d.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-slo
+  labels:
+    app.kubernetes.io/name: demo-app
+spec:
+  groups:
+    - name: demo-slo-recording
+      interval: 30s
+      rules:
+      - record: demo:sli_errors:ratio_rate5m
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[5m])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[5m]))
+      - record: demo:sli_slow:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[5m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[5m]))
+          )
+      - record: demo:sli_errors:ratio_rate30m
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[30m])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[30m]))
+      - record: demo:sli_slow:ratio_rate30m
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[30m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[30m]))
+          )
+      - record: demo:sli_errors:ratio_rate1h
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[1h])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[1h]))
+      - record: demo:sli_slow:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[1h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[1h]))
+          )
+      - record: demo:sli_errors:ratio_rate2h
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[2h])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[2h]))
+      - record: demo:sli_slow:ratio_rate2h
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[2h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[2h]))
+          )
+      - record: demo:sli_errors:ratio_rate6h
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[6h])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[6h]))
+      - record: demo:sli_slow:ratio_rate6h
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[6h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[6h]))
+          )
+      - record: demo:sli_errors:ratio_rate1d
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[1d])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[1d]))
+      - record: demo:sli_slow:ratio_rate1d
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[1d]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[1d]))
+          )
+      - record: demo:sli_errors:ratio_rate3d
+        expr: |
+          (sum(rate(http_requests_total{job="demo-app",route=~"/api/.*",code=~"5.."}[3d])) or vector(0))
+          /
+          sum(rate(http_requests_total{job="demo-app",route=~"/api/.*"}[3d]))
+      - record: demo:sli_slow:ratio_rate3d
+        expr: |
+          1 - (
+            sum(rate(http_request_duration_seconds_bucket{job="demo-app",route=~"/api/.*",le="0.3"}[3d]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="demo-app",route=~"/api/.*"}[3d]))
+          )
+      - record: demo:slo_availability:objective
+        expr: vector(0.995)
+      - record: demo:error_budget_consumed:ratio7d
+        # Share of the monthly error budget used in the last 7 days.
+        expr: avg_over_time(demo:sli_errors:ratio_rate1h[7d]) / 0.005 * 7 / 30
+
+    - name: demo-slo-alerts
+      rules:
+      - alert: DemoErrorBudgetBurnFast
+        expr: |
+          (demo:sli_errors:ratio_rate1h > (14.4 * 0.005) and demo:sli_errors:ratio_rate5m > (14.4 * 0.005))
+          or
+          (demo:sli_errors:ratio_rate6h > (6 * 0.005) and demo:sli_errors:ratio_rate30m > (6 * 0.005))
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: Orders API is burning its error budget fast
+          description: >-
+            {{ $value | humanizePercentage }} of /api requests failed over the alert window (1h or 6h;
+            the current rate can be higher). At this rate the 30-day error budget (0.5%) is gone in
+            about two days or less.
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-01-error-spike.md
+
+      - alert: DemoErrorBudgetBurnSlow
+        expr: |
+          (demo:sli_errors:ratio_rate1d > (3 * 0.005) and demo:sli_errors:ratio_rate2h > (3 * 0.005))
+          or
+          (demo:sli_errors:ratio_rate3d > 0.005 and demo:sli_errors:ratio_rate6h > 0.005)
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: Orders API error rate is above its SLO
+          description: The error budget is being used faster than it is earned. Investigate during working hours.
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-01-error-spike.md
+
+      - alert: DemoLatencyBudgetBurnFast
+        expr: |
+          (demo:sli_slow:ratio_rate1h > (14.4 * 0.01) and demo:sli_slow:ratio_rate5m > (14.4 * 0.01))
+          or
+          (demo:sli_slow:ratio_rate6h > (6 * 0.01) and demo:sli_slow:ratio_rate30m > (6 * 0.01))
+        for: 2m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: Orders API is too slow
+          description: >-
+            {{ $value | humanizePercentage }} of /api requests took longer than 300 ms over the alert
+            window (1h or 6h; SLO: at most 1%).
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-02-latency.md
+
+      - alert: DemoReplicasDown
+        expr: sum(up{job="demo-app"}) < 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Fewer than 2 of 3 demo-app replicas are being scraped
+          description: Only {{ $value }} replicas are up. One more failure and there is no redundancy left.
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-03-pod-node-failure.md
+
+      - alert: DemoAllReplicasDown
+        expr: absent(up{job="demo-app"} == 1)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: The orders API is completely down
+          description: No demo-app replica is reachable by Prometheus.
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-03-pod-node-failure.md
+
+      - alert: DemoPodRestarting
+        expr: sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace="demo"}[10m])) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: Pod {{ $labels.pod }} restarted more than twice in 10 minutes
+          description: Check `kubectl -n demo describe pod {{ $labels.pod }}` and the previous container's logs.
+          runbook_url: https://github.com/ObaidAbdullah16/kubeops-sre-lab/blob/main/gamedays/GD-03-pod-node-failure.md

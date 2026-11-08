@@ -1,0 +1,128 @@
+# End-to-end tests in a real Kubernetes cluster (kind) on every push.
+#  - quick (always): Kyverno + the policies + the demo app built from this commit
+#  - full (manual, "full: true"): the whole lab exactly like scripts/up.sh does it
+name: E2E (kind)
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Also boot the full GitOps stack (Argo CD, Prometheus, Loki, ...)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    name: Policies + demo app
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: e2e
+      - name: Build the demo image and load it into kind
+        run: |
+          docker build --build-arg VERSION=e2e -t kubeops-demo-app:e2e app
+          kind load docker-image kubeops-demo-app:e2e --name e2e
+      - name: Install Kyverno (same chart version and values as the lab)
+        run: |
+          version="$(python3 -c 'import yaml; print(yaml.safe_load(open("gitops/root/values.yaml"))["charts"]["kyverno"]["version"])')"
+          helm install kyverno kyverno --repo https://kyverno.github.io/kyverno/ --version "$version" \
+            -n kyverno --create-namespace -f gitops/platform/kyverno.yaml --wait --timeout 8m
+      - name: Apply policies and the enforced namespace
+        run: |
+          kubectl apply -f gitops/policies
+          kubectl apply -f gitops/apps/demo/namespace.yaml
+          # Wait until the admission webhook enforces the policies.
+          for _ in $(seq 1 30); do
+            if ! kubectl apply --dry-run=server -f chaos/manifests/insecure.yaml >/dev/null 2>&1; then echo "policies active"; break; fi
+            sleep 5
+          done
+      - name: Insecure and unsigned workloads are rejected
+        run: |
+          for f in chaos/manifests/*.yaml; do
+            if out="$(kubectl apply --dry-run=server -f "$f" 2>&1)"; then
+              echo "::error::$f was ACCEPTED: $out"; exit 1
+            fi
+            echo "rejected as expected: $f"
+            echo "$out" | head -5
+          done
+      - name: A compliant workload is accepted
+        run: |
+          python3 - <<'PY' > /tmp/good.yaml
+          import yaml
+          docs = list(yaml.safe_load_all(open("tests/policies/resources.yaml")))
+          print(yaml.safe_dump(next(d for d in docs if d["metadata"]["name"] == "good")))
+          PY
+          kubectl apply --dry-run=server -f /tmp/good.yaml
+      - name: Deploy the demo app (unsigned local image, non-enforced namespace)
+        run: |
+          kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.1/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+          kubectl create namespace e2e
+          kubectl apply -k tests/e2e
+          kubectl -n e2e rollout status deploy/demo-app --timeout=180s
+          kubectl -n e2e rollout status deploy/loadgen --timeout=120s
+      - name: Smoke test + chaos round trip
+        run: |
+          kubectl -n e2e port-forward svc/demo-app 18081:80 >/dev/null 2>&1 &
+          sleep 3
+          curl -fsS localhost:18081/api/orders
+          curl -fsS -X POST localhost:18081/api/orders -H 'Content-Type: application/json' -d '{"item":"e2e","quantity":1}'
+          curl -fsS localhost:18081/metrics | grep -q 'http_requests_total{route="/api/orders"'
+          kubectl -n e2e create configmap demo-chaos --from-literal=error_rate=1
+          for i in $(seq 1 40); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' localhost:18081/api/orders)"
+            [ "$code" = 500 ] && { echo "chaos active after ~$((i * 5))s"; break; }
+            sleep 5
+          done
+          test "$code" = 500
+          kubectl -n e2e delete configmap demo-chaos
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n e2e describe pods | tail -50
+          kubectl -n kyverno logs deploy/kyverno-admission-controller --tail=50
+
+  full:
+    name: Full lab (Argo CD app of apps)
+    if: github.event_name == 'workflow_dispatch' && inputs.full
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kubeops
+          config: kind/cluster.yaml
+      - name: scripts/up.sh (deploys from this commit)
+        env:
+          TARGET_REVISION: ${{ github.sha }}
+        run: bash scripts/up.sh
+      - run: bash scripts/status.sh
+      - name: Guardrails game day (GD-04)
+        run: bash chaos/bad-deploy.sh | tee /tmp/gd04.txt && ! grep -q ACCEPTED /tmp/gd04.txt
+      - name: UIs answer
+        run: |
+          curl -fsS -o /dev/null http://localhost:3000/api/health
+          curl -fsS -o /dev/null http://localhost:9090/-/ready
+          curl -fsS http://localhost:8081/api/orders
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get applications.argoproj.io -n argocd -o wide || true
+          kubectl get pods -A

@@ -1,0 +1,108 @@
+# kube-prometheus-stack values for a laptop-sized kind cluster.
+fullnameOverride: kps
+
+# kind runs these control-plane parts in a way Prometheus cannot scrape: avoid
+# permanent "target down" noise.
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false
+    windows: false
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090 # http://localhost:9090
+  prometheusSpec:
+    retention: 7d
+    retentionSize: 4GB
+    scrapeInterval: 15s
+    # Pick up every ServiceMonitor / PodMonitor / PrometheusRule in the cluster,
+    # not only the ones labelled for this Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 400Mi}
+      limits: {memory: 1Gi}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 5Gi
+
+alertmanager:
+  service:
+    type: NodePort
+    nodePort: 30093 # http://localhost:9093
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}
+  config:
+    route:
+      receiver: "null"
+      group_by: [alertname, namespace, slo]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+    # A page already says "the budget is burning": do not also send the ticket-level alert.
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity = "warning"']
+        equal: [namespace, slo]
+    receivers:
+      - name: "null"
+    # To get Slack messages: add a receiver with slack_configs (api_url_file from a
+    # Secret) and route severity=critical to it. See docs/ALERTING.md.
+
+grafana:
+  adminUser: admin
+  adminPassword: kubeops-lab # local lab only; the cluster is reachable from 127.0.0.1 only
+  service:
+    type: NodePort
+    nodePort: 30300 # http://localhost:3000
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  sidecar:
+    dashboards:
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc:3100
+      jsonData:
+        maxLines: 1000
+
+kube-state-metrics:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+
+prometheusOperator:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 256Mi}

@@ -1,0 +1,3 @@
+singleBinary:
+  persistence:
+    enabled: false

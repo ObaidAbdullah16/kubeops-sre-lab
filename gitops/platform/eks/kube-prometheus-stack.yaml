@@ -1,0 +1,6 @@
+# EKS demo day: no EBS CSI driver is installed (keeps the cluster simple and
+# cheap), so Prometheus keeps its data on the node (emptyDir) - fine for a
+# cluster that lives for a few hours.
+prometheus:
+  prometheusSpec:
+    storageSpec: null

@@ -1,0 +1,89 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kubeops-policies
+policies:
+  - ../../gitops/policies/require-requests-limits.yaml
+  - ../../gitops/policies/require-probes.yaml
+  - ../../gitops/policies/restricted-security-context.yaml
+  - ../../gitops/policies/disallow-latest-tag.yaml
+  - ../../gitops/policies/restrict-registries.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: require-requests-limits
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good]
+    result: pass
+  - policy: require-requests-limits
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-everything]
+    result: fail
+  - policy: require-probes
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good]
+    result: pass
+  - policy: require-probes
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-everything]
+    result: fail
+  - policy: restricted-security-context
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good]
+    result: pass
+  - policy: restricted-security-context
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-everything]
+    result: fail
+  - policy: disallow-latest-tag
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good]
+    result: pass
+  - policy: disallow-latest-tag
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-everything]
+    result: fail
+  - policy: disallow-latest-tag
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [untagged-from-docker-hub]
+    result: fail
+  - policy: restrict-registries
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good]
+    result: pass
+  - policy: restrict-registries
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [untagged-from-docker-hub]
+    result: fail
+  - policy: restrict-registries
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-everything]
+    result: fail
+  - policy: require-probes
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [untagged-from-docker-hub]
+    result: pass
+  - policy: restrict-registries
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [sneaky-init]
+    result: fail
+  - policy: restricted-security-context
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [sneaky-init]
+    result: fail

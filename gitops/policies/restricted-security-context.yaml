@@ -1,0 +1,55 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restricted-security-context
+  annotations:
+    policies.kyverno.io/title: Restricted security context
+    policies.kyverno.io/description: >-
+      Containers run as non-root, cannot escalate privileges, drop all Linux capabilities and use a read-only root filesystem (the Kubernetes 'restricted' Pod Security Standard plus read-only root).
+spec:
+  validationActions: [Deny]
+  # Also check Deployments, StatefulSets, ... so a bad manifest is rejected
+  # at apply time instead of failing later when the ReplicaSet creates pods.
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    # Only namespaces that opt in (label kubeops.dev/policy=enforce). The
+    # platform namespaces (monitoring, argocd, kyverno) are left alone.
+    namespaceSelector:
+      matchLabels:
+        kubeops.dev/policy: enforce
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    # Init containers run first, with the same pod privileges: check them too.
+    - name: allContainers
+      expression: >-
+        object.spec.containers + (has(object.spec.initContainers) ? object.spec.initContainers : [])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c,
+          (has(c.securityContext) && has(c.securityContext.runAsNonRoot) && c.securityContext.runAsNonRoot == true) ||
+          (has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot == true))
+      message: set runAsNonRoot=true (pod or container securityContext)
+    - expression: >-
+        variables.allContainers.all(c, has(c.securityContext) &&
+          has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false)
+      message: set securityContext.allowPrivilegeEscalation=false on every container
+    - expression: >-
+        variables.allContainers.all(c, !has(c.securityContext) ||
+          !has(c.securityContext.privileged) || c.securityContext.privileged == false)
+      message: privileged containers are not allowed
+    - expression: >-
+        variables.allContainers.all(c, has(c.securityContext) && has(c.securityContext.capabilities) &&
+          has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop)
+      message: drop ALL capabilities (securityContext.capabilities.drop=["ALL"])
+    - expression: >-
+        variables.allContainers.all(c, has(c.securityContext) &&
+          has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem == true)
+      message: set securityContext.readOnlyRootFilesystem=true (mount an emptyDir for scratch space)
+    - expression: "!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))"
+      message: hostPath volumes are not allowed

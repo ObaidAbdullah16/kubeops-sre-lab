@@ -1,0 +1,105 @@
+# Build the demo image for amd64 + arm64, scan it, push it to GHCR, sign it with
+# keyless cosign and pin the new digest in gitops/apps/demo (GitOps: Argo CD
+# then rolls it out; Kyverno only admits images signed by this workflow on main).
+name: Image
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/image.yml"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write   # push to ghcr.io
+      id-token: write   # keyless cosign signature
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
+          cache: false
+      - name: Unit tests
+        working-directory: app
+        run: go test -race ./...
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build for scanning (amd64)
+        env:
+          VERSION: ${{ github.sha }}
+        run: docker buildx build --platform linux/amd64 --build-arg "VERSION=${VERSION::7}" --load -t local/kubeops-demo-app:scan app
+      - name: Vulnerability scan (block fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: local/kubeops-demo-app:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Push multi-arch image (with SBOM and provenance attestations)
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ github.sha }}
+        run: |
+          image="ghcr.io/${OWNER,,}/kubeops-demo-app"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx build --platform linux/amd64,linux/arm64 --build-arg "VERSION=${VERSION::7}" \
+            --sbom=true --provenance=mode=max --metadata-file meta.json \
+            -t "$image:${VERSION::7}" --push app
+          digest="$(jq -r '."containerimage.digest"' meta.json)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed \`$image@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Sign (keyless, GitHub OIDC identity, Rekor transparency log)
+        env:
+          REF: ${{ steps.push.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$REF"
+          cosign verify "$REF" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/image.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "Signed and verified." >> "$GITHUB_STEP_SUMMARY"
+
+  pin:
+    name: Pin digest in Git
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # commit the new digest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Update kustomization.yaml and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          file=gitops/apps/demo/kustomization.yaml
+          sed -i -E "s/digest: sha256:[0-9a-f]{64}/digest: ${DIGEST}/" "$file"
+          git diff --quiet && { echo "digest unchanged"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy: demo-app ${DIGEST:7:12}"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for _ in 1 2 3; do
+            git pull --rebase "$remote" main && git push "$remote" HEAD:main && break
+            sleep 5
+          done

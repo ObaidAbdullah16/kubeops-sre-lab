@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsigned-digest
+  namespace: demo
+spec:
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+  automountServiceAccountToken: false
+  containers:
+    - name: app
+      image: ghcr.io/obaidabdullah16/kubeops-demo-app@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+      readinessProbe: {httpGet: {path: /readyz, port: 8080}}
+      livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}

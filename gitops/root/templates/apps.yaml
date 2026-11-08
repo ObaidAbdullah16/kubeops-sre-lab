@@ -1,0 +1,15 @@
+# Wave -2: CRDs and controllers first. Wave -1: logging. Wave 0: policies, rules,
+# dashboards. Wave 1: the demo workload (needs the policies and ServiceMonitor CRD).
+{{ include "kubeops.helmApp" (dict "root" . "name" "kyverno" "wave" "-2" "namespace" "kyverno" "release" "kyverno" "values" "kyverno.yaml" "chart" .Values.charts.kyverno) }}
+---
+{{ include "kubeops.helmApp" (dict "root" . "name" "kube-prometheus-stack" "wave" "-2" "namespace" "monitoring" "release" "kps" "values" "kube-prometheus-stack.yaml" "chart" .Values.charts.kubePrometheusStack) }}
+---
+{{ include "kubeops.helmApp" (dict "root" . "name" "loki" "wave" "-1" "namespace" "monitoring" "release" "loki" "values" "loki.yaml" "chart" .Values.charts.loki) }}
+---
+{{ include "kubeops.helmApp" (dict "root" . "name" "alloy" "wave" "-1" "namespace" "monitoring" "release" "alloy" "values" "alloy.yaml" "chart" .Values.charts.alloy) }}
+---
+{{ include "kubeops.gitApp" (dict "root" . "name" "policies" "wave" "0" "namespace" "kyverno" "path" "gitops/policies") }}
+---
+{{ include "kubeops.gitApp" (dict "root" . "name" "observability" "wave" "0" "namespace" "monitoring" "path" "gitops/observability") }}
+---
+{{ include "kubeops.gitApp" (dict "root" . "name" "demo" "wave" "1" "namespace" "demo" "path" "gitops/apps/demo") }}

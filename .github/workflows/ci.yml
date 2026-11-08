@@ -1,0 +1,111 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Demo app (Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
+          cache: false # no dependencies
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: Hadolint
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: app/Dockerfile
+
+  gitops:
+    name: Manifests, policies and SLO rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install kubeconform, kyverno, promtool (pinned, checksums verified)
+        run: |
+          bash scripts/ci-tools.sh
+          echo "$PWD/.bin" >> "$GITHUB_PATH"
+      - name: Kyverno policy unit tests
+        run: kyverno test tests/policies --remove-color
+      - name: SLO recording rules and burn-rate alert tests (promtool)
+        run: bash tests/slo/run.sh
+      - name: Dashboards are generated from tools/dashboards.py
+        run: python3 tools/dashboards.py && git diff --exit-code gitops/observability/dashboards.yaml
+      - name: Schema validation (kubeconform + CRD catalog)
+        env:
+          CATALOG: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+        run: |
+          validate() { kubeconform -strict -summary -schema-location default -schema-location "$CATALOG" "$@"; }
+          for d in gitops/apps/demo gitops/observability tests/e2e; do kubectl kustomize "$d" | validate -; done
+          for p in kind eks; do helm template root gitops/root --set profile=$p | validate -; done
+          validate gitops/policies chaos/manifests
+      - name: Demo manifests pass every policy
+        run: |
+          kubectl kustomize gitops/apps/demo > /tmp/demo.yaml
+          kyverno apply gitops/policies/require-*.yaml gitops/policies/restrict*.yaml gitops/policies/disallow-latest-tag.yaml \
+            --resource /tmp/demo.yaml --values-file tests/policies/values.yaml --remove-color
+      - name: Platform chart values render (exact chart versions)
+        run: |
+          python3 - <<'PY' > /tmp/charts.txt
+          import yaml
+          v = yaml.safe_load(open("gitops/root/values.yaml"))["charts"]
+          files = {"kyverno": "kyverno", "kubePrometheusStack": "kube-prometheus-stack", "loki": "loki", "alloy": "alloy"}
+          for key, f in files.items():
+              c = v[key]
+              print(c["repoURL"], c["chart"], c["version"], f)
+          PY
+          while read -r repo chart version file; do
+            for extra in "" "gitops/platform/eks/$file.yaml"; do
+              args=(-f "gitops/platform/$file.yaml"); [[ -n "$extra" && -f "$extra" ]] && args+=(-f "$extra")
+              helm template "$chart" "$chart" --repo "$repo" --version "$version" "${args[@]}" > /dev/null
+              echo "rendered $chart $version ${extra:-(kind)}"
+            done
+          done < /tmp/charts.txt
+
+  infra-and-scripts:
+    name: Terraform, scripts, workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "<1.18.0"
+          terraform_wrapper: false
+      - run: pip install checkov shellcheck-py actionlint-py zizmor
+      - run: terraform fmt -check -recursive infra
+      - run: |
+          terraform -chdir=infra/eks init -backend=false -input=false >/dev/null
+          terraform -chdir=infra/eks validate
+      - run: checkov -d infra --framework terraform --config-file .checkov.yaml --quiet --compact
+      - run: shellcheck -x -P SCRIPTDIR scripts/*.sh chaos/*.sh tests/slo/run.sh
+      - run: actionlint
+      - run: zizmor --min-severity low .github

@@ -1,0 +1,102 @@
+# Test resources for the Kyverno policies (run: kyverno test tests/policies).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: good
+  namespace: demo
+spec:
+  selector: {matchLabels: {app: good}}
+  template:
+    metadata: {labels: {app: good}}
+    spec:
+      securityContext: {runAsNonRoot: true}
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}
+          readinessProbe: {tcpSocket: {port: 8080}}
+          livenessProbe: {tcpSocket: {port: 8080}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-everything
+  namespace: demo
+spec:
+  selector: {matchLabels: {app: bad}}
+  template:
+    metadata: {labels: {app: bad}}
+    spec:
+      containers:
+        - name: app
+          image: nginx:latest
+          securityContext: {privileged: true}
+      volumes:
+        - name: host
+          hostPath: {path: /var/run}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: untagged-from-docker-hub
+  namespace: demo
+spec:
+  securityContext: {runAsNonRoot: true}
+  containers:
+    - name: app
+      image: busybox
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {memory: 32Mi}
+      readinessProbe: {exec: {command: ["true"]}}
+      livenessProbe: {exec: {command: ["true"]}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: not-enforced
+  namespace: sandbox
+spec:
+  containers:
+    - name: app
+      image: nginx:latest
+---
+# A compliant app container with a non-compliant init container: init containers
+# run first with the same pod privileges, so the policies must check them too.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sneaky-init
+  namespace: demo
+spec:
+  selector: {matchLabels: {app: sneaky}}
+  template:
+    metadata: {labels: {app: sneaky}}
+    spec:
+      securityContext: {runAsNonRoot: true}
+      initContainers:
+        - name: setup
+          image: docker.io/library/busybox:1.37
+          securityContext: {privileged: true}
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 32Mi}
+          readinessProbe: {tcpSocket: {port: 8080}}
+          livenessProbe: {tcpSocket: {port: 8080}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}

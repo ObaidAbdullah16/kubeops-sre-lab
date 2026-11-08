@@ -1,0 +1,9 @@
+# Checks skipped on purpose for the optional, short-lived EKS demo cluster.
+skip-check:
+  - CKV2_AWS_11   # VPC flow logs: cost; the cluster lives for a few hours
+  - CKV_AWS_130   # Public IPs on node subnets: replaces a $33/month NAT gateway; EKS-managed SG
+  - CKV_AWS_37    # Control-plane logs: CloudWatch cost; enable for real clusters
+  - CKV_AWS_38    # API open to 0.0.0.0/0 by default: scripts/eks-up.sh narrows it to your IP
+  - CKV_AWS_39    # Public API endpoint: needed to use kubectl from a laptop/CI without a VPN
+  - CKV_AWS_394   # AZ pinning: the first two AZs on purpose
+  - CKV_AWS_58    # Secrets envelope encryption: EKS encrypts all API data by default (AWS-owned key)

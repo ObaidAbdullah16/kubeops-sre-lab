@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    kubeops.dev/policy: enforce                       # Kyverno policies apply here
+    pod-security.kubernetes.io/enforce: restricted    # built-in Pod Security Admission too
+    pod-security.kubernetes.io/enforce-version: latest

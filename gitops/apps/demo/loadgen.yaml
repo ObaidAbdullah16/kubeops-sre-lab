@@ -1,0 +1,45 @@
+# Steady background traffic (~10 req/s) so the SLO panels and burn-rate alerts
+# always have data. Scale to 0 to stop it: kubectl -n demo scale deploy/loadgen --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels:
+    app.kubernetes.io/name: loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: ghcr.io/obaidabdullah16/kubeops-demo-app # same image, "loadgen" mode
+          args: ["loadgen", "--target", "http://demo-app.demo.svc"]
+          env:
+            - name: RPS
+              value: "10"
+          readinessProbe:
+            exec: {command: ["/demo", "version"]}
+            periodSeconds: 30
+          livenessProbe:
+            exec: {command: ["/demo", "version"]}
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 48Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
