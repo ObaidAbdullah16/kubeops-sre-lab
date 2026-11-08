@@ -1,6 +1,6 @@
 # Wave -2: CRDs and controllers first. Wave -1: logging. Wave 0: policies, rules,
 # dashboards. Wave 1: the demo workload (needs the policies and ServiceMonitor CRD).
-{{ include "kubeops.helmApp" (dict "root" . "name" "kyverno" "wave" "-2" "namespace" "kyverno" "release" "kyverno" "values" "kyverno.yaml" "chart" .Values.charts.kyverno) }}
+{{ include "kubeops.helmApp" (dict "root" . "name" "kyverno" "wave" "-2" "namespace" "kyverno" "release" "kyverno" "values" "kyverno.yaml" "chart" .Values.charts.kyverno "serverSideDiff" true) }}
 ---
 {{ include "kubeops.helmApp" (dict "root" . "name" "kube-prometheus-stack" "wave" "-2" "namespace" "monitoring" "release" "kps" "values" "kube-prometheus-stack.yaml" "chart" .Values.charts.kubePrometheusStack) }}
 ---

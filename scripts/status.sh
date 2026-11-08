@@ -7,6 +7,10 @@ if ! kind_cluster_exists; then
   echo "kubeops (kind): DOWN (start: bash scripts/up.sh)"
   exit 0
 fi
+if kind_cluster_paused; then
+  echo "kubeops (kind): PAUSED - uses no memory; 'bash scripts/up.sh' resumes it in ~2-3 minutes ('down --all' deletes it)"
+  exit 0
+fi
 echo "kubeops (kind): UP - free, on your laptop (stop: bash scripts/down.sh)"
 echo "== Nodes"
 kubectl --context "$KCTX" get nodes -o wide | awk '{print $1, $2, $5}' | column -t

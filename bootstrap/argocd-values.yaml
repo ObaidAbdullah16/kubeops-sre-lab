@@ -8,6 +8,9 @@ configs:
     server.insecure: true # plain HTTP on localhost:8090 (the cluster is local-only)
   cm:
     timeout.reconciliation: 60s
+    # Kubernetes fills in the rules of aggregated ClusterRoles (Kyverno ships several): not drift.
+    resource.compareoptions: |
+      ignoreAggregatedRoles: true
     # Let the app-of-apps wait for each Application to be healthy before the next
     # sync wave (Argo CD does not assess Application health by default).
     resource.customizations.health.argoproj.io_Application: |

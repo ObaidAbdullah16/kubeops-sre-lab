@@ -117,20 +117,48 @@ YAML
 
 # wait_for_apps <kube context> [timeout seconds]
 wait_for_apps() {
-  local ctx="$1" timeout="${2:-1200}" start=$SECONDS line
+  local ctx="$1" timeout="${2:-1200}" start=$SECONDS line healthy_only=0
   log "Waiting for Argo CD to sync everything (first run pulls ~2 GB of images: 5-15 minutes)"
   while :; do
     line="$(kubectl --context "$ctx" -n argocd get applications.argoproj.io \
       -o jsonpath='{range .items[*]}{.metadata.name}={.status.sync.status}/{.status.health.status} {end}' 2>/dev/null || true)"
-    if [[ -n "$line" && "$line" != *OutOfSync* && "$line" != *Progressing* && "$line" != *Missing* \
-          && "$line" != *Degraded* && "$line" != *Unknown* && "$line" == *demo=* && "$line" != *"/ "* ]]; then
-      log "All applications Synced/Healthy"
-      return 0
+    if [[ -n "$line" && "$line" != *Progressing* && "$line" != *Missing* && "$line" != *Degraded* \
+          && "$line" != *Unknown* && "$line" == *demo=* && "$line" != *"/ "* ]]; then
+      if [[ "$line" != *OutOfSync* ]]; then
+        log "All applications Synced/Healthy"
+        return 0
+      fi
+      # Everything runs and is healthy; some app keeps a small difference from Git. Do not wait
+      # for ever: after ~3 minutes like this, say what differs and carry on.
+      healthy_only=$((healthy_only + 1))
+      if (( healthy_only >= 9 )); then
+        warn "Everything is running and healthy. Still marked OutOfSync (a field the cluster changes after Argo CD applies it):"
+        kubectl --context "$ctx" -n argocd get applications.argoproj.io -o json 2>/dev/null | jq -r '.items[]
+          | select(.status.sync.status == "OutOfSync") | .metadata.name as $app
+          | .status.resources[]? | select(.status == "OutOfSync")
+          | "    \($app): \(.kind) \(.namespace // "-")/\(.name)"' 2>/dev/null | head -15 || true
+        warn "The lab works. Details: Argo CD (http://localhost:8090) > the application > DIFF."
+        return 0
+      fi
+    else
+      healthy_only=0
     fi
     (( SECONDS - start < timeout )) || { warn "Not all applications are healthy yet: $line"; return 1; }
     printf '  %s\n' "$line"
     sleep 20
   done
+}
+
+# Node containers of the kind cluster (kubeops-control-plane, kubeops-worker, ...).
+kind_nodes() { kind get nodes --name "$CLUSTER" 2>/dev/null; }
+
+# kind_cluster_paused: the cluster exists but its node containers are stopped (scripts/down.sh).
+kind_cluster_paused() {
+  local n
+  for n in $(kind_nodes); do
+    [[ "$(docker inspect -f '{{.State.Running}}' "$n" 2>/dev/null)" == "true" ]] && return 1
+  done
+  [[ -n "$(kind_nodes)" ]]
 }
 
 demo_digest_is_placeholder() {

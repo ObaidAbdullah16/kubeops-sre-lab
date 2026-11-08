@@ -17,6 +17,22 @@ if demo_digest_is_placeholder; then
   warn "Continuing: everything except the demo app will come up."
 fi
 
+if kind_cluster_exists && kind_cluster_paused; then
+  log "Resuming the paused kind cluster '$CLUSTER'"
+  # shellcheck disable=SC2046  # one argument per node container
+  docker start $(kind_nodes) >/dev/null
+  ready=0
+  for _ in $(seq 1 36); do   # the API server needs ~30 s; give it up to 3 minutes
+    if kubectl --context "$KCTX" wait --for=condition=Ready nodes --all --timeout=5s >/dev/null 2>&1; then
+      ready=1; break
+    fi
+    sleep 5
+  done
+  if [[ "$ready" != 1 ]]; then
+    warn "The paused cluster did not come back - creating it again (15-25 minutes)"
+    kind delete cluster --name "$CLUSTER"
+  fi
+fi
 if kind_cluster_exists; then
   log "kind cluster '$CLUSTER' already exists"
 else

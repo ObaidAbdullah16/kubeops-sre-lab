@@ -1,4 +1,8 @@
 # Kyverno with single replicas (lab). Policies live in gitops/policies.
+# Kyverno's notes for Argo CD users: with preserve=true (the chart default) an app-of-apps
+# shows Kyverno OutOfSync for ever.
+config:
+  preserve: false
 admissionController:
   replicas: 1
   container:

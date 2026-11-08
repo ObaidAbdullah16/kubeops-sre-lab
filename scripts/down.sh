@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Stop the lab: delete the kind cluster (all data in it is thrown away).
+# Stop the lab.
 #
-#   bash scripts/down.sh          # deletes the cluster; keeps the cached kind node image (~1 GB)
-#                                 # so the next 'up' starts faster
-#   bash scripts/down.sh --all    # also deletes that image (frees the disk space)
+#   bash scripts/down.sh          # pauses it: stops the three node containers, so Docker's memory
+#                                 # is free again, but keeps the cluster and the ~2 GB of images
+#                                 # inside it. The next 'up' resumes it in about 2-3 minutes.
+#   bash scripts/down.sh --all    # deletes the cluster and the cached kind node image (frees the
+#                                 # disk space; the next 'up' downloads everything again: 15-25 minutes)
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need kind docker
@@ -16,11 +18,15 @@ for a in "$@"; do
   esac
 done
 
-if kind_cluster_exists; then
+if ! kind_cluster_exists; then
+  log "No kind cluster named '$CLUSTER'"
+elif [[ "$ALL" == 1 ]]; then
   log "Deleting kind cluster '$CLUSTER'"
   kind delete cluster --name "$CLUSTER"
 else
-  log "No kind cluster named '$CLUSTER'"
+  log "Pausing kind cluster '$CLUSTER' (the next 'up' resumes it; 'down --all' deletes it)"
+  # shellcheck disable=SC2046  # one argument per node container
+  docker stop $(kind_nodes) >/dev/null
 fi
 if [[ "$ALL" == 1 ]]; then
   for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^kindest/node:' || true); do

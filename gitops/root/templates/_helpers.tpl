@@ -24,6 +24,10 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+    {{- if .serverSideDiff }}
+    # Compare with what the API server would store (incl. mutating webhooks), as Kyverno recommends
+    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+    {{- end }}
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
