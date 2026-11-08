@@ -43,13 +43,38 @@ repo_url() {
 
 kind_cluster_exists() { kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; }
 
+# fetch_chart <repo name> <repo url> <chart> <version> [oci://... mirror] : prints the path of the
+# chart's .tgz. Charts are kept in ~/.cache/kubeops/charts, so each version is downloaded once.
+# GitHub's release downloads (where the Argo CD chart lives) sometimes time out: retry, then try
+# the OCI copy on ghcr.io.
+fetch_chart() {
+  local name="$1" url="$2" chart="$3" version="$4" oci="${5:-}" i
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/kubeops/charts"
+  local tgz="$dir/$chart-$version.tgz"
+  mkdir -p "$dir"
+  if [[ -s "$tgz" ]]; then echo "$tgz"; return 0; fi
+  helm repo add "$name" "$url" >/dev/null 2>&1 || true
+  for i in 1 2 3; do
+    helm repo update "$name" >/dev/null 2>&1 || true
+    if helm pull "$name/$chart" --version "$version" --destination "$dir" >/dev/null 2>&1 && [[ -s "$tgz" ]]; then
+      echo "$tgz"; return 0
+    fi
+    if [[ -n "$oci" ]] && helm pull "$oci" --version "$version" --destination "$dir" >/dev/null 2>&1 && [[ -s "$tgz" ]]; then
+      echo "$tgz"; return 0
+    fi
+    warn "Downloading the $chart $version chart failed (attempt $i of 3, usually a slow network) - retrying in $((i * 15))s"
+    sleep $((i * 15))
+  done
+  die "Could not download the $chart $version chart. Check the internet connection and run the same command again (it continues where it stopped)."
+}
+
 # install_argocd <kube context> : Helm install / upgrade of Argo CD
 install_argocd() {
-  local ctx="$1"
-  helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
-  helm repo update argo >/dev/null
+  local ctx="$1" chart
+  chart="$(fetch_chart argo https://argoproj.github.io/argo-helm argo-cd "$ARGOCD_CHART_VERSION" \
+    oci://ghcr.io/argoproj/argo-helm/argo-cd)"
   log "Installing Argo CD (chart $ARGOCD_CHART_VERSION)"
-  helm upgrade --install argocd argo/argo-cd --kube-context "$ctx" \
+  helm upgrade --install argocd "$chart" --kube-context "$ctx" \
     --namespace argocd --create-namespace --version "$ARGOCD_CHART_VERSION" \
     -f "$REPO_ROOT/bootstrap/argocd-values.yaml" --wait --timeout 10m >/dev/null
 }
