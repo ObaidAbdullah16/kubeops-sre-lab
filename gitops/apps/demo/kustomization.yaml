@@ -11,4 +11,4 @@ resources:
 images:
   # Updated automatically by .github/workflows/image.yml after every signed build.
   - name: ghcr.io/obaidabdullah16/kubeops-demo-app
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    digest: sha256:73fe2f19766d3a38106753d6886649f320a2f76dfb91e2ebdc368c8cfc5e6aed
