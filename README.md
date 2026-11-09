@@ -13,7 +13,7 @@ game days with runbooks and postmortems.**
 > **Simulated incidents.** All outages in this lab are injected on purpose by `chaos/*.sh` against a
 > demo service with synthetic traffic - nothing here is a real production system.
 
-Free on your laptop (kind). Optional "demo day" on AWS EKS for ~$0.15-0.20/hour (spot nodes in a classic account, on-demand in a new-sign-up project account).
+Free on your laptop (kind). Optional "demo day" on AWS EKS for ~$0.15-0.35/hour (spot nodes in a classic account, on-demand t4g.medium in a new-sign-up project account, c7i-flex.large while that account is still on the AWS Free plan).
 
 ## What is inside
 
@@ -87,12 +87,12 @@ Runbooks: [gamedays/](gamedays/README.md) · Postmortems:
 Next steps I would add: distributed tracing (OpenTelemetry SDK in the app + Grafana
 Tempo), and Argo Rollouts canary releases gated on the same SLO queries.
 
-## Optional: EKS demo day (~$0.15-0.20/hour)
+## Optional: EKS demo day (~$0.15-0.35/hour)
 
 Uses the shared AWS setup from `aws-foundation` (state bucket, budgets, OIDC role).
 
 ```bash
-bash scripts/eks-up.sh       # VPC + EKS + 2 Graviton spot nodes + the same GitOps stack (~20 min)
+bash scripts/eks-up.sh       # VPC + EKS + 2 nodes + the same GitOps stack (~20 min)
 bash scripts/eks-status.sh
 bash scripts/eks-down.sh     # destroy everything
 ```

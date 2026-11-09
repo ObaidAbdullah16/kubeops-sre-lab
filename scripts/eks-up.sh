@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Optional demo day on AWS: create an EKS cluster (2 Graviton nodes: spot, or on-demand in a
-# project account from the new AWS sign-up, which cannot use spot) and deploy the same GitOps
-# stack as the kind lab. ~20 minutes. ~$0.15/hour with spot, ~$0.20/hour on-demand.
+# Optional demo day on AWS: create an EKS cluster with 2 nodes and deploy the same GitOps stack
+# as the kind lab. ~20 minutes. Nodes and cost while up:
+#   classic account                      2 x Graviton spot (t4g.medium/large)  ~$0.15/hour
+#   project account (new AWS sign-up)    2 x t4g.medium on-demand (no spot)    ~$0.20/hour
+#   ... still on the AWS Free plan       2 x c7i-flex.large (Intel)            ~$0.35/hour
+# The Free plan only starts "Free tier eligible" types; c7i-flex.large is the smallest of them
+# with room for this stack (t4g.small: 2 GB and 11 pods per node is too little).
 # Stop with: bash scripts/eks-down.sh   (in a classic account the nightly Auto-stop workflow also does it)
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -24,10 +28,19 @@ fi
 
 nodes=()
 cost="~\$0.15/hour"
+node_desc="2 x Graviton spot (t4g.medium/t4g.large)"
 if [[ "${AWS_ACCOUNT_TYPE:-classic}" == project ]]; then
-  nodes=(-var "capacity_type=ON_DEMAND" -var 'node_instance_types=["t4g.medium"]')
-  cost="~\$0.20/hour"
+  if aws_free_plan; then
+    node_type=c7i-flex.large; cost="~\$0.35/hour"
+    nodes=(-var "capacity_type=ON_DEMAND" -var "node_instance_types=[\"$node_type\"]" -var "node_ami_type=AL2023_x86_64_STANDARD")
+  else
+    node_type=t4g.medium; cost="~\$0.20/hour"
+    nodes=(-var "capacity_type=ON_DEMAND" -var "node_instance_types=[\"$node_type\"]")
+  fi
+  node_desc="2 x $node_type on-demand"
+  require_launchable "$node_type" 2
 fi
+log "Nodes: $node_desc - $cost while up"
 log "Terraform apply: VPC, EKS control plane, node group (~15 minutes)"
 tf_init "$TF_EKS" "kubeops-sre-lab/eks.tfstate"
 tf_apply "$TF_EKS" -var "api_allowed_cidrs=$cidrs" -var "admin_principal_arns=$admins" "${nodes[@]}"

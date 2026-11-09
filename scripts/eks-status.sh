@@ -11,7 +11,7 @@ if ! tf_has_resources "$TF_EKS"; then
   exit 0
 fi
 name="$(tf_out "$TF_EKS" cluster_name)"
-echo "kubeops-eks: UP (~\$0.15-0.20/hour - stop with: bash scripts/eks-down.sh)"
+echo "kubeops-eks: UP (~\$0.15-0.35/hour - stop with: bash scripts/eks-down.sh)"
 aws eks describe-cluster --name "$name" --query 'cluster.{status:status,version:version,endpoint:endpoint}' --output table
 aws eks list-nodegroups --cluster-name "$name" --output text
 if command -v kubectl >/dev/null && kubectl --context "$EKS_CTX" get nodes >/dev/null 2>&1; then

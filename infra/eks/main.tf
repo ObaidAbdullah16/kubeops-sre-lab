@@ -1,6 +1,7 @@
 # Optional "demo day" EKS cluster: the same GitOps stack as the kind lab, on AWS.
 # Create it only to record a video or show it live, then destroy it.
-# Cost while up: ~$0.15/hour (EKS control plane $0.10 + 2 Graviton spot nodes).
+# Cost while up: ~$0.15/hour (EKS control plane $0.10 + 2 Graviton spot nodes); on-demand nodes
+# ~$0.20/hour, Intel c7i-flex.large nodes on the AWS Free plan ~$0.35/hour (scripts/eks-up.sh).
 terraform {
   required_version = ">= 1.10.0"
   required_providers {
@@ -43,6 +44,16 @@ variable "kubernetes_version" {
 variable "node_instance_types" {
   type    = list(string)
   default = ["t4g.medium", "t4g.large"]
+}
+
+variable "node_ami_type" {
+  description = "Node image: AL2023_ARM_64_STANDARD for Graviton (t4g), AL2023_x86_64_STANDARD for Intel/AMD (c7i-flex.large on the AWS Free plan). scripts/eks-up.sh sets it."
+  type        = string
+  default     = "AL2023_ARM_64_STANDARD"
+  validation {
+    condition     = contains(["AL2023_ARM_64_STANDARD", "AL2023_x86_64_STANDARD"], var.node_ami_type)
+    error_message = "node_ami_type must be AL2023_ARM_64_STANDARD or AL2023_x86_64_STANDARD."
+  }
 }
 
 variable "capacity_type" {
@@ -234,14 +245,15 @@ resource "aws_eks_addon" "pre_nodes" {
 }
 
 # Graviton spot nodes: ~70% cheaper than on-demand. Two instance types make a
-# spot shortage less likely. (On-demand in accounts that cannot use spot.)
+# spot shortage less likely. (On-demand in accounts that cannot use spot; Intel
+# c7i-flex.large nodes in accounts on the AWS Free plan - see scripts/eks-up.sh.)
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.name}-${replace(lower(var.capacity_type), "_", "-")}"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = aws_subnet.public[*].id
   capacity_type   = var.capacity_type
-  ami_type        = "AL2023_ARM_64_STANDARD"
+  ami_type        = var.node_ami_type
   instance_types  = var.node_instance_types
   disk_size       = 30
 
